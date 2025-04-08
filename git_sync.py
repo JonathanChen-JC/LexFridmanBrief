@@ -69,7 +69,7 @@ class GitSync:
                 self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url], check=False)
                 
             # 验证远程仓库连接
-            self._run_git_command(['git', 'ls-remote', '--exit-code', 'origin', self.branch])
+            self._run_git_command(['git', 'ls-remote', '--exit-code', self.auth_repo_url, self.branch])
         except Exception as e:
             print(f'Failed to initialize repository: {e}')
             raise
