@@ -16,8 +16,12 @@ class GitSync:
         if not all([self.repo_url, self.username, self.token]):
             raise ValueError('Missing required Git configuration in environment variables')
         
-        # 使用原始仓库URL
-        self.auth_repo_url = self.repo_url
+        # 构建带有认证信息的仓库URL
+        repo_parts = self.repo_url.split('://')
+        if len(repo_parts) == 2:
+            self.auth_repo_url = f'https://{self.username}:{self.token}@{repo_parts[1]}'
+        else:
+            self.auth_repo_url = self.repo_url
         
         # 确保工作目录存在
         self.work_dir = os.path.dirname(os.path.abspath(__file__))
@@ -52,13 +56,23 @@ class GitSync:
     
     def init_repo(self):
         """初始化Git仓库并添加远程仓库"""
-        # 检查是否已经是Git仓库
-        if not os.path.exists(os.path.join(self.work_dir, '.git')):
-            self._run_git_command(['git', 'init'])
-            self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
-        else:
-            # 更新远程仓库URL
-            self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
+        try:
+            # 先配置Git凭证
+            self.setup_git_config()
+            
+            # 检查是否已经是Git仓库
+            if not os.path.exists(os.path.join(self.work_dir, '.git')):
+                self._run_git_command(['git', 'init'])
+                self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url], check=False)
+            else:
+                # 更新远程仓库URL
+                self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url], check=False)
+                
+            # 验证远程仓库连接
+            self._run_git_command(['git', 'ls-remote', '--exit-code', 'origin', self.branch])
+        except Exception as e:
+            print(f'Failed to initialize repository: {e}')
+            raise
     
     def get_last_build_date(self, feed_path: str) -> Optional[datetime]:
         """从feed.xml文件中获取lastBuildDate"""
