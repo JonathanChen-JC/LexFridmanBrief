@@ -16,13 +16,13 @@ class GitSync:
         if not all([self.repo_url, self.username, self.token]):
             raise ValueError('Missing required Git configuration in environment variables')
         
-        # 构建带认证的仓库URL
-        self.auth_repo_url = f'https://{self.username}:{self.token}@{self.repo_url.split("://")[1]}'
+        # 使用原始仓库URL
+        self.auth_repo_url = self.repo_url
         
         # 确保工作目录存在
         self.work_dir = os.path.dirname(os.path.abspath(__file__))
         
-    def _run_git_command(self, command: list[str], check: bool = True) -> Optional[str]:
+    def _run_git_command(self, command: list[str], check: bool = True, input: str = None) -> Optional[str]:
         """执行Git命令并返回输出"""
         try:
             result = subprocess.run(
@@ -30,7 +30,8 @@ class GitSync:
                 cwd=self.work_dir,
                 check=check,
                 capture_output=True,
-                text=True
+                text=True,
+                input=input
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
@@ -40,9 +41,14 @@ class GitSync:
             return None
     
     def setup_git_config(self):
-        """配置Git用户信息"""
+        """配置Git用户信息和凭证"""
         self._run_git_command(['git', 'config', 'user.name', self.username])
         self._run_git_command(['git', 'config', 'user.email', f'{self.username}@users.noreply.github.com'])
+        # 配置凭证存储
+        self._run_git_command(['git', 'config', 'credential.helper', 'store'])
+        # 设置远程仓库认证信息
+        credential_input = f'url={self.repo_url}\nusername={self.username}\npassword={self.token}\n'
+        self._run_git_command(['git', 'credential', 'approve'], input=credential_input)
     
     def init_repo(self):
         """初始化Git仓库并添加远程仓库"""
