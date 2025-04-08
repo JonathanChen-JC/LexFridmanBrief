@@ -13,6 +13,7 @@ from gemini_summarizer import load_articles, call_gemini_api, save_brief, DEFAUL
 from rss_generator import update_feed
 from flask import Flask, send_file, Response
 from threading import Thread
+import aiohttp
 
 # 设置日志
 log_format = '%(asctime)s [%(name)s] %(levelname)s: %(message)s'
@@ -64,7 +65,8 @@ class PodcastUpdater:
                 self.git_sync.init_repo()
                 self.git_sync.setup_git_config()
                 
-                # 获取远程feed.xml
+                # 获取并对比远程feed.xml，自动选择最新版本
+                logger.info("正在对比本地和远程feed.xml版本...")
                 self.git_sync.pull_feed()
             
             # 更新feed
@@ -116,14 +118,24 @@ class PodcastUpdater:
             logger.error(f"检查和更新播客失败: {e}")
     
     async def self_ping(self):
-        """自检功能"""
-        while True:
-            try:
-                logger.info("服务正常运行中...")
+        """自检功能，每5分钟ping一次服务地址以保持活跃"""
+        service_url = os.getenv('RENDER_SERVICE_URL')
+        if not service_url:
+            logger.warning("未设置RENDER_SERVICE_URL环境变量，无法执行自检保活")
+            return
+
+        async with aiohttp.ClientSession() as session:
+            while True:
+                try:
+                    async with session.get(service_url) as response:
+                        if response.status == 200:
+                            logger.info(f"服务保活ping成功: {service_url}")
+                        else:
+                            logger.warning(f"服务保活ping返回非200状态码: {response.status}")
+                except Exception as e:
+                    logger.error(f"服务保活ping失败: {e}")
                 await asyncio.sleep(300)  # 5分钟
-            except Exception as e:
-                logger.error(f"自检失败: {e}")
-    
+
     async def periodic_check(self):
         """定期检查播客更新"""
         while True:

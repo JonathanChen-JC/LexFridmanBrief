@@ -64,6 +64,11 @@ GIT_USERNAME=your_username
 GIT_TOKEN=your_token
 ```
 
+3. Render服务配置：
+```
+RENDER_SERVICE_URL=https://your-app-name.onrender.com  # 在Render平台部署时的服务访问地址，用于实现服务自我保活
+```
+
 ## 部署说明
 
 1. 克隆项目并安装依赖：

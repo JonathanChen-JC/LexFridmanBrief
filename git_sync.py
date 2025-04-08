@@ -2,6 +2,8 @@ import os
 import subprocess
 from datetime import datetime
 from typing import Optional
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 
 class GitSync:
     def __init__(self):
@@ -52,14 +54,49 @@ class GitSync:
             # 更新远程仓库URL
             self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
     
-    def pull_feed(self):
-        """从远程仓库拉取feed.xml"""
+    def get_last_build_date(self, feed_path: str) -> Optional[datetime]:
+        """从feed.xml文件中获取lastBuildDate"""
         try:
+            if not os.path.exists(feed_path):
+                return None
+            tree = ET.parse(feed_path)
+            root = tree.getroot()
+            last_build_date = root.find('./channel/lastBuildDate')
+            if last_build_date is not None and last_build_date.text:
+                return parsedate_to_datetime(last_build_date.text)
+            return None
+        except Exception as e:
+            print(f'Failed to get lastBuildDate: {e}')
+            return None
+
+    def pull_feed(self):
+        """从远程仓库拉取feed.xml并与本地版本对比"""
+        try:
+            # 获取本地feed.xml的lastBuildDate
+            local_feed_path = os.path.join(self.work_dir, 'feed.xml')
+            local_date = self.get_last_build_date(local_feed_path)
+
+            # 拉取远程仓库
             self._run_git_command(['git', 'fetch', 'origin', self.branch])
             self._run_git_command(['git', 'checkout', self.branch], check=False)
-            self._run_git_command(['git', 'pull', 'origin', self.branch], check=False)
-        except subprocess.CalledProcessError:
-            print('Failed to pull from remote repository')
+            
+            # 获取远程feed.xml的lastBuildDate
+            remote_feed_path = os.path.join(self.work_dir, 'feed.xml')
+            self._run_git_command(['git', 'checkout', 'origin/' + self.branch, '--', 'feed.xml'], check=False)
+            remote_date = self.get_last_build_date(remote_feed_path)
+
+            # 如果远程版本较新，保留远程版本
+            if remote_date and (not local_date or remote_date > local_date):
+                self._run_git_command(['git', 'checkout', 'origin/' + self.branch, '--', 'feed.xml'])
+            else:
+                # 否则恢复本地版本（如果存在）
+                if os.path.exists(local_feed_path):
+                    self._run_git_command(['git', 'checkout', self.branch, '--', 'feed.xml'])
+
+        except subprocess.CalledProcessError as e:
+            print(f'Failed to pull from remote repository: {e}')
+        except Exception as e:
+            print(f'Error during feed comparison: {e}')
     
     def push_feed(self):
         """将更新后的feed.xml推送到远程仓库"""
