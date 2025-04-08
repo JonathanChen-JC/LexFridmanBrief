@@ -39,6 +39,40 @@ def parse_existing_feed(feed_path):
         print(f"Error parsing existing feed: {e}")
         return deque(maxlen=50)
 
+def format_content(content):
+    # 按照多个换行符分割段落，使用HTML标签格式化
+    lines = content.split('\n')
+    formatted_lines = []
+    current_paragraph = []
+    
+    for line in lines:
+        line = line.rstrip()
+        
+        # 处理标题行（以#开头）
+        if line.lstrip().startswith('#'):
+            # 如果有待处理的段落，先添加它
+            if current_paragraph:
+                formatted_lines.append(f"<p>{' '.join(current_paragraph)}</p>")
+                current_paragraph = []
+            
+            formatted_lines.append(line)
+            formatted_lines.append('')  # 标题后添加一个空行
+        # 处理空行：表示段落结束
+        elif not line.strip():
+            if current_paragraph:
+                formatted_lines.append(f"<p>{' '.join(current_paragraph)}</p>")
+                current_paragraph = []
+        # 处理普通文本行
+        else:
+            current_paragraph.append(line)
+    
+    # 处理最后一个段落
+    if current_paragraph:
+        formatted_lines.append(f"<p>{' '.join(current_paragraph)}</p>")
+    
+    # 使用单个换行符连接所有行
+    return '\n'.join(formatted_lines)
+
 def update_feed():
     brief_dir = os.path.join(os.path.dirname(__file__), 'brief')
     feed_path = os.path.join(os.path.dirname(__file__), 'feed.xml')
@@ -70,9 +104,8 @@ def update_feed():
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # 确保段落之间有空行
-            paragraphs = content.split('\n\n')
-            formatted_content = '\n\n'.join(p.strip() for p in paragraphs if p.strip())
+            # 格式化内容，保持原有段落格式
+            formatted_content = format_content(content)
             
             # 创建新条目
             fe = fg.add_entry()
@@ -96,16 +129,13 @@ def update_feed():
         fe.title(entry['title'])
         fe.link(href=entry['link'])
         fe.description(entry['description'])
-        fe.pubDate(entry['pub_date'])
+        fe.pubDate(datetime.strptime(entry['pub_date'], '%a, %d %b %Y %H:%M:%S %z'))
     
-    # 保存feed
-    fg.rss_file(feed_path)
+    # 生成feed并写入文件
+    fg.rss_file(feed_path, pretty=True)
     
-    # 推送更新到Git仓库
+    # 提交更新到Git
     try:
-        git_sync.push_feed()
+        git_sync.commit_and_push_feed()
     except Exception as e:
-        print(f"Failed to push feed to Git repository: {e}")
-
-if __name__ == '__main__':
-    update_feed()
+        print(f"Git sync failed: {e}")
