@@ -132,6 +132,9 @@ class GitSync:
     def commit_and_push_feed(self):
         """将更新后的feed.xml推送到远程仓库"""
         try:
+            # 确保Git仓库已正确初始化
+            self.init_repo()
+            
             feed_path = os.path.join(self.work_dir, 'feed.xml')
             if not os.path.exists(feed_path):
                 logging.error('feed.xml文件不存在')
