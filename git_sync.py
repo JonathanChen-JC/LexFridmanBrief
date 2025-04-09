@@ -4,6 +4,17 @@ from datetime import datetime
 from typing import Optional
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
+import logging
+
+# 设置日志
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("git_sync.log"),
+        logging.StreamHandler()
+    ]
+)
 
 class GitSync:
     def __init__(self):
@@ -123,18 +134,18 @@ class GitSync:
         try:
             feed_path = os.path.join(self.work_dir, 'feed.xml')
             if not os.path.exists(feed_path):
-                logger.error('feed.xml文件不存在')
+                logging.error('feed.xml文件不存在')
                 return
             
             # 添加并提交更改
             self._run_git_command(['git', 'add', 'feed.xml'])
             commit_message = f'Update feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
             self._run_git_command(['git', 'commit', '-m', commit_message], check=False)
-            logger.info(f'已提交更新: {commit_message}')
+            logging.info(f'已提交更新: {commit_message}')
             
             # 推送到远程仓库
             self._run_git_command(['git', 'push', 'origin', self.branch])
-            logger.info('已成功推送到远程仓库')
+            logging.info('已成功推送到远程仓库')
         except subprocess.CalledProcessError as e:
-            logger.error(f'推送feed.xml失败: {e}')
+            logging.error(f'推送feed.xml失败: {e}')
             raise

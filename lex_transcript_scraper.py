@@ -315,26 +315,21 @@ class LexFridmanTranscriptScraper:
         # 查找Transcript链接
         transcript_url = self.find_transcript_url(link)
         
-        content = None
-        source_type = "transcript"
+        # 如果没有找到Transcript，直接返回False
+        if not transcript_url:
+            logging.info(f"跳过处理：未找到Transcript - {title}")
+            return False
         
-        if transcript_url:
-            # 获取Transcript内容
-            content = self.get_transcript_content(transcript_url)
-        
-        if not content:
-            # 如果没有找到Transcript或获取失败，使用原始播客页面内容
-            content = self.get_podcast_content(link)
-            source_type = "podcast page"
+        # 获取Transcript内容
+        content = self.get_transcript_content(transcript_url)
         
         if content:
             # 添加元数据到内容顶部
             metadata = f"# {title}\n\n"
             metadata += f"- **日期**: {date.strftime('%Y-%m-%d')}\n"
             metadata += f"- **链接**: {link}\n"
-            if transcript_url:
-                metadata += f"- **Transcript链接**: {transcript_url}\n"
-            metadata += f"- **来源**: {source_type}\n\n"
+            metadata += f"- **Transcript链接**: {transcript_url}\n"
+            metadata += f"- **来源**: transcript\n\n"
             metadata += "---\n\n"
             
             content = metadata + content
@@ -343,7 +338,7 @@ class LexFridmanTranscriptScraper:
             filename = self.format_filename(title, date)
             return self.save_transcript(content, filename)
         else:
-            logging.error(f"无法获取内容: {link}")
+            logging.error(f"无法获取Transcript内容: {transcript_url}")
             return False
     
     def run(self, limit=None):
