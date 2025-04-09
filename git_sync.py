@@ -25,6 +25,8 @@ class GitSync:
         # 解析仓库信息
         if self.repo_url.startswith('https://github.com/'):
             self.repo_info = self.repo_url.replace('https://github.com/', '').strip('/')
+            if self.repo_info.endswith('.git'):
+                self.repo_info = self.repo_info[:-4]
             self.repo_owner, self.repo_name = self.repo_info.split('/')
         else:
             raise ValueError('仓库URL必须是GitHub HTTPS URL格式')
