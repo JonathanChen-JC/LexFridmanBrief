@@ -61,10 +61,6 @@ class PodcastUpdater:
         """初始化feed.xml，对比本地和远程版本"""
         try:
             if self.git_sync:
-                # 初始化Git仓库
-                self.git_sync.init_repo()
-                self.git_sync.setup_git_config()
-                
                 # 获取并对比远程feed.xml，自动选择最新版本
                 logger.info("正在对比本地和远程feed.xml版本...")
                 self.git_sync.pull_feed()
