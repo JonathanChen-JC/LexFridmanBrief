@@ -143,16 +143,23 @@ class GitSync:
         try:
             # 确保Git仓库已正确初始化并同步远程更改
             self.init_repo()
+            
+            # 设置明确的pull策略
+            self._run_git_command(['git', 'config', 'pull.rebase', 'false'])
+            
+            # 先保存本地更改
+            self._run_git_command(['git', 'add', 'feed.xml'])
+            self._run_git_command(['git', 'commit', '-m', f'Update feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'], check=False)
+            
             # 同步远程更改
             self._run_git_command(['git', 'fetch', 'origin', self.branch])
             try:
-                self._run_git_command(['git', 'pull', '--rebase', 'origin', self.branch])
+                self._run_git_command(['git', 'pull', 'origin', self.branch'])
             except subprocess.CalledProcessError as e:
                 logging.warning(f'拉取远程更改失败，尝试解决冲突: {e.stderr}')
-                # 如果rebase失败，中止rebase并恢复到原始状态
-                self._run_git_command(['git', 'rebase', '--abort'], check=False)
-                # 尝试普通合并
-                self._run_git_command(['git', 'pull', 'origin', self.branch])
+                # 如果合并失败，尝试使用merge策略
+                self._run_git_command(['git', 'config', 'pull.rebase', 'false'])
+                self._run_git_command(['git', 'pull', 'origin', self.branch', '--no-rebase'])
             
             feed_path = os.path.join(self.work_dir, 'feed.xml')
             if not os.path.exists(feed_path):
