@@ -1,4 +1,5 @@
 import os
+import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from feedgen.feed import FeedGenerator
@@ -80,11 +81,13 @@ def update_feed():
     # 初始化Git同步
     try:
         git_sync = GitSync()
-        git_sync.init_repo()
-        git_sync.setup_git_config()
         git_sync.pull_feed()
+    except ValueError as e:
+        logger.error(f"Git同步初始化失败：缺少必要的配置 - {e}")
+        return
     except Exception as e:
-        print(f"Git sync initialization failed: {e}")
+        logger.error(f"Git同步初始化失败：{e}")
+        return
     
     # 获取现有条目
     existing_entries = parse_existing_feed(feed_path)
@@ -137,5 +140,8 @@ def update_feed():
     # 提交更新到Git
     try:
         git_sync.commit_and_push_feed()
+    except FileNotFoundError as e:
+        logger.error(f"Git同步失败：{e}")
     except Exception as e:
-        print(f"Git sync failed: {e}")
+        logger.error(f"Git同步失败：{e}")
+        return
