@@ -64,17 +64,18 @@ class PodcastUpdater:
                 # 获取并对比远程feed.xml，自动选择最新版本
                 logger.info("正在对比本地和远程feed.xml版本...")
                 self.git_sync.pull_feed()
-            
-            # 更新feed
-            update_feed()
-            
-            # 如果Git同步可用，推送更新后的feed
-            if self.git_sync:
-                try:
-                    self.git_sync.commit_and_push_feed()
-                    logger.info("成功将更新后的feed.xml推送到Git仓库")
-                except Exception as e:
-                    logger.error(f"推送feed.xml到Git仓库失败: {e}")
+                
+                # 仅当本地feed.xml不存在时更新feed
+                if not os.path.exists('feed.xml'):
+                    update_feed()
+                    try:
+                        self.git_sync.commit_and_push_feed()
+                        logger.info("成功将更新后的feed.xml推送到Git仓库")
+                    except Exception as e:
+                        logger.error(f"推送feed.xml到Git仓库失败: {e}")
+            else:
+                # 如果Git同步不可用，直接更新feed
+                update_feed()
             
             logger.info("Feed初始化完成")
         except Exception as e:

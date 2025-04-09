@@ -76,8 +76,18 @@ class GitSync:
             return None
         try:
             tree = ET.parse(feed_path)
-            last_build_date = tree.getroot().find('./channel/lastBuildDate')
-            return parsedate_to_datetime(last_build_date.text) if last_build_date is not None and last_build_date.text else None
+            root = tree.getroot()
+            # 首先尝试获取lastBuildDate
+            last_build_date = root.find('./channel/lastBuildDate')
+            if last_build_date is not None and last_build_date.text:
+                return parsedate_to_datetime(last_build_date.text)
+            # 如果没有lastBuildDate，尝试获取最新的pubDate
+            items = root.findall('./channel/item')
+            if items:
+                pub_date = items[0].find('pubDate')
+                if pub_date is not None and pub_date.text:
+                    return parsedate_to_datetime(pub_date.text)
+            return None
         except Exception as e:
             logger.error(f'获取feed.xml最后更新时间失败: {e}')
             return None
