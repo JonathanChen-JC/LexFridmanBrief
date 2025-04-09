@@ -109,7 +109,11 @@ class PodcastUpdater:
                 # 更新feed并推送到Git
                 update_feed()
                 if self.git_sync:
-                    self.git_sync.push_feed()
+                    try:
+                        self.git_sync.commit_and_push_feed()
+                        logger.info("成功将更新后的feed.xml推送到Git仓库")
+                    except Exception as e:
+                        logger.error(f"推送feed.xml到Git仓库失败: {e}")
                 
                 logger.info(f"成功处理新的播客: {articles[0]['title']}")
             

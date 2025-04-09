@@ -79,12 +79,40 @@ class LexFridmanTranscriptScraper:
             return []
     
     def find_transcript_url(self, podcast_url):
-        """在播客页面中查找Transcript链接"""
+        """在播客页面中查找Transcript链接，仅在当前播客的<item>标签内搜索"""
         logging.info(f"查找Transcript链接: {podcast_url}")
         try:
-            response = requests.get(podcast_url)
+            response = requests.get(self.rss_url)
             response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
+            
+            # 解析XML
+            root = ET.fromstring(response.content)
+            
+            # 使用XML命名空间
+            namespaces = {'': root.tag.split('}')[0].strip('{')} if '}' in root.tag else {}
+            channel = root.find('channel', namespaces) if namespaces else root.find('channel')
+            items = channel.findall('item', namespaces) if channel else []
+            
+            # 在items中查找当前播客的<item>标签
+            current_item = None
+            for item in items:
+                link_elem = item.find('link', namespaces)
+                if link_elem is not None and link_elem.text == podcast_url:
+                    current_item = item
+                    break
+            
+            if current_item is None:
+                logging.warning(f"在RSS源中未找到当前播客: {podcast_url}")
+                return None
+            
+            # 在当前播客的<item>标签内容中查找Transcript链接
+            description_elem = current_item.find('description', namespaces)
+            if description_elem is None or not description_elem.text:
+                logging.warning(f"当前播客没有描述内容: {podcast_url}")
+                return None
+            
+            # 解析描述内容中的HTML
+            soup = BeautifulSoup(description_elem.text, 'html.parser')
             
             # 方法1: 查找包含"Transcript:"文本的元素及其后的链接
             for element in soup.find_all(['p', 'div', 'span']):
@@ -100,13 +128,6 @@ class LexFridmanTranscriptScraper:
                     next_element = element.find_next('a')
                     if next_element and next_element.get('href'):
                         return next_element.get('href')
-                    
-                    # 查找同一段落中的链接
-                    if element.parent:
-                        links = element.parent.find_all('a')
-                        for link in links:
-                            if link.get('href'):
-                                return link.get('href')
             
             # 方法2: 直接查找URL中包含transcript的链接
             for link in soup.find_all('a'):
@@ -114,35 +135,12 @@ class LexFridmanTranscriptScraper:
                 if href and "transcript" in href.lower():
                     return href
             
-            # 方法3: 构造transcript URL
-            # 移除URL中的查询参数
-            base_url = podcast_url.split('?')[0]
-            # 移除末尾的斜杠
-            if base_url.endswith('/'):
-                base_url = base_url[:-1]
-            # 构造transcript URL
-            constructed_url = f"{base_url}-transcript"
+            logging.warning(f"暂未找到这集播客的逐字稿: {podcast_url}")
+            return None
             
-            # 验证构造的URL是否有效
-            try:
-                test_response = requests.head(constructed_url, timeout=5)
-                if test_response.status_code == 200:
-                    return constructed_url
-            except requests.exceptions.RequestException:
-                pass
-                
-            logging.warning(f"未找到Transcript链接，使用构造的URL: {constructed_url}")
-            return constructed_url  # 即使无法验证，也返回构造的URL
         except Exception as e:
             logging.error(f"查找Transcript链接时出错: {e}")
-            # 尝试构造一个基本的transcript URL作为后备
-            try:
-                base_url = podcast_url.split('?')[0]
-                if base_url.endswith('/'):
-                    base_url = base_url[:-1]
-                return f"{base_url}-transcript"
-            except:
-                return None
+            return None
     
     def get_transcript_content(self, transcript_url):
         """获取Transcript页面的内容"""

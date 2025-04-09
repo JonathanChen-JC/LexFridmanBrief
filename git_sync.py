@@ -118,20 +118,23 @@ class GitSync:
         except Exception as e:
             print(f'Error during feed comparison: {e}')
     
-    def push_feed(self):
+    def commit_and_push_feed(self):
         """将更新后的feed.xml推送到远程仓库"""
         try:
             feed_path = os.path.join(self.work_dir, 'feed.xml')
             if not os.path.exists(feed_path):
-                print('feed.xml not found')
+                logger.error('feed.xml文件不存在')
                 return
             
             # 添加并提交更改
             self._run_git_command(['git', 'add', 'feed.xml'])
             commit_message = f'Update feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
             self._run_git_command(['git', 'commit', '-m', commit_message], check=False)
+            logger.info(f'已提交更新: {commit_message}')
             
             # 推送到远程仓库
             self._run_git_command(['git', 'push', 'origin', self.branch])
+            logger.info('已成功推送到远程仓库')
         except subprocess.CalledProcessError as e:
-            print(f'Failed to push feed.xml: {e}')
+            logger.error(f'推送feed.xml失败: {e}')
+            raise

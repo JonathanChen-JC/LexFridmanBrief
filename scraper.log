@@ -1,0 +1,10 @@
+2025-04-09 10:47:55,849 - INFO - 查找Transcript链接: https://lexfridman.com/douglas-murray-4/
+2025-04-09 10:47:58,783 - WARNING - 在RSS源中未找到当前播客: https://lexfridman.com/douglas-murray-4/
+2025-04-09 10:47:58,787 - INFO - 查找Transcript链接: https://lexfridman.com/elon-musk-4/
+2025-04-09 10:48:01,748 - WARNING - 在RSS源中未找到当前播客: https://lexfridman.com/elon-musk-4/
+2025-04-09 10:48:18,509 - INFO - 查找Transcript链接: https://lexfridman.com/douglas-murray-4/
+2025-04-09 10:48:21,379 - WARNING - 在RSS源中未找到当前播客: https://lexfridman.com/douglas-murray-4/
+2025-04-09 10:48:21,383 - INFO - 开始解析RSS源: https://lexfridman.com/feed/podcast/
+2025-04-09 10:48:24,288 - INFO - 成功解析RSS源，获取到1个条目
+2025-04-09 10:48:24,291 - INFO - 查找Transcript链接: https://lexfridman.com/dave-smith/?utm_source=rss&utm_medium=rss&utm_campaign=dave-smith
+2025-04-09 10:48:27,199 - WARNING - 暂未找到这集播客的逐字稿: https://lexfridman.com/dave-smith/?utm_source=rss&utm_medium=rss&utm_campaign=dave-smith
