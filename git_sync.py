@@ -1,11 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
-import subprocess
-import tempfile
-import shutil
+import logging
+import base64
+import requests
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -20,151 +22,164 @@ class GitSync:
         if not all([self.repo_url, self.username, self.token]):
             raise ValueError('缺少必要的Git配置环境变量')
         
-        # 构建带认证的仓库URL
-        if self.repo_url.startswith('https://'):
-            self.auth_repo_url = self.repo_url.replace(
-                'https://',
-                f'https://{self.username}:{self.token}@'
-            )
+        # 解析仓库信息
+        if self.repo_url.startswith('https://github.com/'):
+            self.repo_info = self.repo_url.replace('https://github.com/', '').strip('/')
+            self.repo_owner, self.repo_name = self.repo_info.split('/')
         else:
-            self.auth_repo_url = self.repo_url
+            raise ValueError('仓库URL必须是GitHub HTTPS URL格式')
         
         self.work_dir = os.path.dirname(os.path.abspath(__file__))
     
-    def _run_git_command(self, command: list[str], cwd: str = None, check: bool = True, input: str = None) -> str:
-        """执行Git命令并返回输出结果"""
+    def _get_github_file_content(self, file_path: str) -> str:
+        """从GitHub获取文件内容"""
         try:
-            result = subprocess.run(
-                command,
-                cwd=cwd or self.work_dir,
-                check=check,
-                capture_output=True,
-                text=True,
-                input=input
-            )
-            return result.stdout.strip()
-        except subprocess.CalledProcessError as e:
-            logger.error(f'Git命令执行失败: {e.stderr}')
-            if check:
-                raise
+            url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/contents/{file_path}?ref={self.branch}"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "Authorization": f"Bearer {self.token}"
+            }
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                content_data = response.json()
+                if content_data.get("encoding") == "base64":
+                    content = base64.b64decode(content_data["content"]).decode("utf-8")
+                    logger.info(f"成功从GitHub获取文件: {file_path}")
+                    return content
+                else:
+                    logger.error(f"不支持的编码: {content_data.get('encoding')}")
+            elif response.status_code == 404:
+                logger.warning(f"GitHub上未找到文件: {file_path}")
+            else:
+                logger.error(f"获取GitHub文件失败，状态码: {response.status_code}")
+            
+            return None
+        except Exception as e:
+            logger.error(f"从GitHub获取文件时出错: {str(e)}")
             return None
     
-    def _setup_repo(self, repo_dir: str):
-        """设置Git仓库的基本配置"""
-        # 设置Git用户信息
-        self._run_git_command(['git', 'config', 'user.name', self.username], cwd=repo_dir)
-        self._run_git_command(['git', 'config', 'user.email', f'{self.username}@users.noreply.github.com'], cwd=repo_dir)
-        self._run_git_command(['git', 'config', 'pull.rebase', 'false'], cwd=repo_dir)
-    
-    def _clone_repository(self) -> str:
-        """克隆仓库到临时目录"""
-        temp_dir = tempfile.mkdtemp(prefix="git_repo_")
-        logger.info(f'克隆仓库到临时目录: {temp_dir}')
+    def _update_github_file(self, file_path: str, content: str, commit_message: str) -> bool:
+        """更新GitHub上的文件"""
+        try:
+            url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/contents/{file_path}"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "Authorization": f"Bearer {self.token}"
+            }
+            
+            # 获取文件的SHA
+            response = requests.get(url, headers=headers)
+            file_sha = None
+            if response.status_code == 200:
+                file_sha = response.json()["sha"]
+            elif response.status_code != 404:
+                logger.error(f"获取文件信息失败，状态码: {response.status_code}")
+                return False
+            
+            # 准备更新数据
+            update_data = {
+                "message": commit_message,
+                "content": base64.b64encode(content.encode("utf-8")).decode("utf-8"),
+                "branch": self.branch
+            }
+            if file_sha:
+                update_data["sha"] = file_sha
+            
+            # 发送更新请求
+            response = requests.put(url, headers=headers, json=update_data)
+            
+            if response.status_code in [200, 201]:
+                logger.info(f"成功更新GitHub文件: {file_path}")
+                return True
+            else:
+                logger.error(f"更新GitHub文件失败，状态码: {response.status_code}")
+                return False
         
-        try:
-            self._run_git_command(['git', 'clone', self.auth_repo_url, temp_dir])
-            self._setup_repo(temp_dir)
-            return temp_dir
         except Exception as e:
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            logger.error(f'克隆仓库失败: {str(e)}')
-            raise
+            logger.error(f"更新GitHub文件时出错: {str(e)}")
+            return False
     
-    def _get_feed_date(self, feed_path: str) -> datetime:
-        """获取feed.xml的最后更新时间"""
-        if not os.path.exists(feed_path):
-            return None
+    def _get_feed_date(self, feed_content: str) -> datetime:
+        """从XML内容中解析lastBuildDate"""
         try:
-            tree = ET.parse(feed_path)
-            root = tree.getroot()
+            if not feed_content:
+                return None
+            
+            root = ET.fromstring(feed_content)
+            
             # 首先尝试获取lastBuildDate
-            last_build_date = root.find('./channel/lastBuildDate')
+            last_build_date = root.find("./channel/lastBuildDate")
             if last_build_date is not None and last_build_date.text:
-                return parsedate_to_datetime(last_build_date.text)
+                try:
+                    return parsedate_to_datetime(last_build_date.text)
+                except ValueError:
+                    pass
+            
             # 如果没有lastBuildDate，尝试获取最新的pubDate
-            items = root.findall('./channel/item')
+            items = root.findall("./channel/item")
             if items:
-                pub_date = items[0].find('pubDate')
+                pub_date = items[0].find("pubDate")
                 if pub_date is not None and pub_date.text:
-                    return parsedate_to_datetime(pub_date.text)
+                    try:
+                        return parsedate_to_datetime(pub_date.text)
+                    except ValueError:
+                        pass
+            
             return None
         except Exception as e:
-            logger.error(f'获取feed.xml最后更新时间失败: {e}')
+            logger.error(f"解析lastBuildDate时出错: {str(e)}")
             return None
     
     def pull_feed(self):
         """从远程仓库获取feed.xml文件"""
-        repo_dir = None
         try:
-            # 克隆仓库到临时目录
-            repo_dir = self._clone_repository()
+            # 获取GitHub上的feed.xml内容
+            github_content = self._get_github_file_content('feed.xml')
             
-            # 切换到指定分支
-            self._run_git_command(['git', 'checkout', self.branch], cwd=repo_dir)
-            
-            # 比较本地和远程feed.xml的日期
+            # 读取本地feed.xml内容
             local_feed_path = os.path.join(self.work_dir, 'feed.xml')
-            repo_feed_path = os.path.join(repo_dir, 'feed.xml')
+            local_content = None
+            if os.path.exists(local_feed_path):
+                with open(local_feed_path, 'r', encoding='utf-8') as f:
+                    local_content = f.read()
             
-            local_date = self._get_feed_date(local_feed_path)
-            remote_date = self._get_feed_date(repo_feed_path)
+            # 解析日期
+            local_date = self._get_feed_date(local_content) if local_content else None
+            github_date = self._get_feed_date(github_content) if github_content else None
             
-            if remote_date and (not local_date or remote_date > local_date):
-                # 使用远程版本
-                shutil.copy2(repo_feed_path, local_feed_path)
+            # 根据日期选择使用哪个版本
+            if github_date and (not local_date or github_date > local_date):
+                # 使用GitHub版本
+                with open(local_feed_path, 'w', encoding='utf-8') as f:
+                    f.write(github_content)
                 logger.info('已更新为远程feed.xml版本')
             else:
                 logger.info('保留本地feed.xml版本')
         
-        finally:
-            # 清理临时目录
-            if repo_dir:
-                shutil.rmtree(repo_dir, ignore_errors=True)
+        except Exception as e:
+            logger.error(f"获取feed.xml失败: {str(e)}")
     
     def commit_and_push_feed(self):
         """提交并推送feed.xml到远程仓库"""
-        repo_dir = None
         try:
             local_feed_path = os.path.join(self.work_dir, 'feed.xml')
             if not os.path.exists(local_feed_path):
                 raise FileNotFoundError('feed.xml文件不存在')
             
-            # 克隆仓库到临时目录
-            repo_dir = self._clone_repository()
+            # 读取本地文件内容
+            with open(local_feed_path, 'r', encoding='utf-8') as f:
+                local_content = f.read()
             
-            # 切换到指定分支
-            self._run_git_command(['git', 'checkout', self.branch], cwd=repo_dir)
-            
-            # 复制本地feed.xml到仓库
-            repo_feed_path = os.path.join(repo_dir, 'feed.xml')
-            shutil.copy2(local_feed_path, repo_feed_path)
-            
-            # 提交更改
+            # 更新GitHub文件
             commit_message = f'更新feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-            self._run_git_command(['git', 'add', 'feed.xml'], cwd=repo_dir)
+            success = self._update_github_file('feed.xml', local_content, commit_message)
             
-            # 检查是否有更改需要提交
-            status = self._run_git_command(['git', 'status', '--porcelain'], cwd=repo_dir)
-            if not status:
-                logger.info('没有需要提交的更改')
-                return
-            
-            self._run_git_command(['git', 'commit', '-m', commit_message], cwd=repo_dir)
-            
-            # 推送到远程仓库
-            try:
-                self._run_git_command(['git', 'push', 'origin', self.branch], cwd=repo_dir)
-                logger.info('成功推送到远程仓库')
-            except subprocess.CalledProcessError as e:
-                if 'non-fast-forward' in str(e.stderr):
-                    logger.warning('推送被拒绝，正在尝试同步并重试...')
-                    self._run_git_command(['git', 'pull', '--no-rebase', 'origin', self.branch], cwd=repo_dir)
-                    self._run_git_command(['git', 'push', 'origin', self.branch], cwd=repo_dir)
-                    logger.info('同步后推送成功')
-                else:
-                    raise
+            if success:
+                logger.info('成功将feed.xml推送到GitHub')
+            else:
+                logger.error('推送feed.xml到GitHub失败')
         
-        finally:
-            # 清理临时目录
-            if repo_dir:
-                shutil.rmtree(repo_dir, ignore_errors=True)
+        except Exception as e:
+            logger.error(f"推送feed.xml失败: {str(e)}")

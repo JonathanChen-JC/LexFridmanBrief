@@ -5,7 +5,6 @@ from zoneinfo import ZoneInfo
 from feedgen.feed import FeedGenerator
 from collections import deque
 import xml.etree.ElementTree as ET
-from git_sync import GitSync
 
 def create_rss_feed():
     fg = FeedGenerator()
@@ -78,17 +77,6 @@ def update_feed():
     brief_dir = os.path.join(os.path.dirname(__file__), 'brief')
     feed_path = os.path.join(os.path.dirname(__file__), 'feed.xml')
     
-    # 初始化Git同步
-    try:
-        git_sync = GitSync()
-        git_sync.pull_feed()
-    except ValueError as e:
-        logger.error(f"Git同步初始化失败：缺少必要的配置 - {e}")
-        return
-    except Exception as e:
-        logger.error(f"Git同步初始化失败：{e}")
-        return
-    
     # 获取现有条目
     existing_entries = parse_existing_feed(feed_path)
     
@@ -136,12 +124,3 @@ def update_feed():
     
     # 生成feed并写入文件
     fg.rss_file(feed_path, pretty=True)
-    
-    # 提交更新到Git
-    try:
-        git_sync.commit_and_push_feed()
-    except FileNotFoundError as e:
-        logger.error(f"Git同步失败：{e}")
-    except Exception as e:
-        logger.error(f"Git同步失败：{e}")
-        return

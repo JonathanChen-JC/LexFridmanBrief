@@ -65,14 +65,9 @@ class PodcastUpdater:
                 logger.info("正在对比本地和远程feed.xml版本...")
                 self.git_sync.pull_feed()
                 
-                # 仅当本地feed.xml不存在时更新feed
+                # 如果本地feed.xml不存在，则创建新的feed
                 if not os.path.exists('feed.xml'):
                     update_feed()
-                    try:
-                        self.git_sync.commit_and_push_feed()
-                        logger.info("成功将更新后的feed.xml推送到Git仓库")
-                    except Exception as e:
-                        logger.error(f"推送feed.xml到Git仓库失败: {e}")
             else:
                 # 如果Git同步不可用，直接更新feed
                 update_feed()
@@ -93,7 +88,7 @@ class PodcastUpdater:
             # 处理每个新的播客
             for episode in new_episodes:
                 # 获取完整的逐字稿
-                if not self.scraper.process_entry(episode):  # 使用process_entry方法替代get_full_transcript
+                if not self.scraper.process_entry(episode):
                     logger.error(f"获取逐字稿失败: {episode['title']}")
                     continue
                 
@@ -112,8 +107,10 @@ class PodcastUpdater:
                 # 保存综述
                 save_brief(summary, articles[0]['title'])
                 
-                # 更新feed并推送到Git
+                # 更新feed
                 update_feed()
+                
+                # 如果Git同步可用，将更新后的feed推送到仓库
                 if self.git_sync:
                     try:
                         self.git_sync.commit_and_push_feed()
