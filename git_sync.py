@@ -106,7 +106,15 @@ class GitSync:
             except subprocess.CalledProcessError as e:
                 if 'non-fast-forward' in str(e.stderr):
                     logger.warning('推送被拒绝，正在尝试同步并重试...')
-                    self._execute_git_command(['git', 'pull', '--rebase', 'origin', self.branch])
+                    # 先检查工作区状态
+                    status = self._execute_git_command(['git', 'status', '--porcelain'])
+                    if status:
+                        # 如果有未提交的更改，先提交
+                        self._execute_git_command(['git', 'add', '.'])
+                        self._execute_git_command(['git', 'commit', '-m', f'临时提交更改 - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
+                    
+                    # 执行pull操作
+                    self._execute_git_command(['git', 'pull', '--no-rebase', 'origin', self.branch])
                     self._execute_git_command(['git', 'push', 'origin', self.branch])
                     logger.info('同步后推送成功')
                 else:
