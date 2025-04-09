@@ -141,8 +141,18 @@ class GitSync:
     def commit_and_push_feed(self):
         """将更新后的feed.xml推送到远程仓库"""
         try:
-            # 确保Git仓库已正确初始化
+            # 确保Git仓库已正确初始化并同步远程更改
             self.init_repo()
+            # 同步远程更改
+            self._run_git_command(['git', 'fetch', 'origin', self.branch])
+            try:
+                self._run_git_command(['git', 'pull', '--rebase', 'origin', self.branch])
+            except subprocess.CalledProcessError as e:
+                logging.warning(f'拉取远程更改失败，尝试解决冲突: {e.stderr}')
+                # 如果rebase失败，中止rebase并恢复到原始状态
+                self._run_git_command(['git', 'rebase', '--abort'], check=False)
+                # 尝试普通合并
+                self._run_git_command(['git', 'pull', 'origin', self.branch])
             
             feed_path = os.path.join(self.work_dir, 'feed.xml')
             if not os.path.exists(feed_path):
@@ -166,11 +176,17 @@ class GitSync:
                 push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
                 logging.info('已成功推送到远程仓库')
             except subprocess.CalledProcessError as e:
-                logging.error(f'推送失败，错误信息: {e.stderr}')
-                # 尝试重新配置认证并重试
-                self.setup_git_config()
-                push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
-                logging.info('重试推送成功')
+                if 'non-fast-forward' in str(e.stderr):
+                    logging.warning('推送被拒绝，正在重新同步并推送...')
+                    self._run_git_command(['git', 'pull', '--rebase', 'origin', self.branch])
+                    push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
+                    logging.info('重新同步后推送成功')
+                else:
+                    logging.error(f'推送失败，错误信息: {e.stderr}')
+                    # 尝试重新配置认证并重试
+                    self.setup_git_config()
+                    push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
+                    logging.info('重试推送成功')
         except subprocess.CalledProcessError as e:
             logging.error(f'推送feed.xml失败: {e.stderr}')
             raise
