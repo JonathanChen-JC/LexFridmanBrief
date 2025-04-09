@@ -6,39 +6,117 @@ import xml.etree.ElementTree as ET
 from email.utils import parsedate_to_datetime
 import logging
 
-# 设置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("git_sync.log"),
-        logging.StreamHandler()
-    ]
-)
+logger = logging.getLogger(__name__)
 
 class GitSync:
     def __init__(self):
-        # 从环境变量获取Git配置
+        """初始化GitSync类，设置Git仓库配置"""
         self.repo_url = os.getenv('GIT_REPO_URL')
         self.branch = os.getenv('GIT_BRANCH', 'main')
         self.username = os.getenv('GIT_USERNAME')
         self.token = os.getenv('GIT_TOKEN')
         
         if not all([self.repo_url, self.username, self.token]):
-            raise ValueError('Missing required Git configuration in environment variables')
+            raise ValueError('缺少必要的Git配置环境变量')
         
-        # 构建带有认证信息的仓库URL
+        # 构建带认证的仓库URL
         repo_parts = self.repo_url.split('://')
-        if len(repo_parts) == 2:
-            self.auth_repo_url = f'https://{self.username}:{self.token}@{repo_parts[1]}'
-        else:
-            self.auth_repo_url = self.repo_url
-        
-        # 确保工作目录存在
+        self.auth_repo_url = f'https://{self.username}:{self.token}@{repo_parts[1]}' if len(repo_parts) == 2 else self.repo_url
         self.work_dir = os.path.dirname(os.path.abspath(__file__))
-        
-    def _run_git_command(self, command: list[str], check: bool = True, input: str = None) -> Optional[str]:
-        """执行Git命令并返回输出"""
+    
+    def init_repo(self):
+        """初始化或更新Git仓库配置"""
+        try:
+            if not os.path.exists(os.path.join(self.work_dir, '.git')):
+                self._execute_git_command(['git', 'init'])
+                self._execute_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
+            else:
+                remote_exists = self._execute_git_command(['git', 'remote'], check=False)
+                if 'origin' not in (remote_exists or ''):
+                    self._execute_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
+                self._execute_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
+            
+            # 验证远程仓库连接
+            self._execute_git_command(['git', 'ls-remote', '--exit-code', self.auth_repo_url, self.branch])
+            logger.info('Git仓库初始化成功')
+        except Exception as e:
+            logger.error(f'Git仓库初始化失败: {e}')
+            raise
+    
+    def setup_git_config(self):
+        """设置Git配置信息"""
+        try:
+            self._execute_git_command(['git', 'config', 'user.name', self.username])
+            self._execute_git_command(['git', 'config', 'user.email', f'{self.username}@users.noreply.github.com'])
+            self._execute_git_command(['git', 'config', 'credential.helper', 'store'])
+            self._execute_git_command(['git', 'config', 'pull.rebase', 'false'])
+            
+            # 配置Git凭证
+            credential_input = f'url={self.repo_url}\nusername={self.username}\npassword={self.token}\n'
+            self._execute_git_command(['git', 'credential', 'approve'], input=credential_input)
+            logger.info('Git配置设置成功')
+        except Exception as e:
+            logger.error(f'Git配置设置失败: {e}')
+            raise
+    
+    def pull_feed(self):
+        """拉取并同步feed.xml文件"""
+        try:
+            local_feed_path = os.path.join(self.work_dir, 'feed.xml')
+            local_date = self._get_feed_date(local_feed_path)
+
+            # 获取远程分支
+            self._execute_git_command(['git', 'fetch', 'origin', self.branch])
+            self._execute_git_command(['git', 'checkout', self.branch], check=False)
+            
+            # 检出远程feed.xml
+            self._execute_git_command(['git', 'checkout', f'origin/{self.branch}', '--', 'feed.xml'], check=False)
+            remote_date = self._get_feed_date(local_feed_path)
+
+            # 根据日期选择最新版本
+            if remote_date and (not local_date or remote_date > local_date):
+                self._execute_git_command(['git', 'checkout', f'origin/{self.branch}', '--', 'feed.xml'])
+                logger.info('已更新为远程feed.xml版本')
+            elif os.path.exists(local_feed_path):
+                self._execute_git_command(['git', 'checkout', self.branch, '--', 'feed.xml'])
+                logger.info('保留本地feed.xml版本')
+        except Exception as e:
+            logger.error(f'拉取feed.xml失败: {e}')
+            raise
+    
+    def commit_and_push_feed(self):
+        """提交并推送feed.xml到远程仓库"""
+        try:
+            feed_path = os.path.join(self.work_dir, 'feed.xml')
+            if not os.path.exists(feed_path):
+                raise FileNotFoundError('feed.xml文件不存在')
+            
+            # 添加并提交更改
+            commit_message = f'更新feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
+            self._execute_git_command(['git', 'add', 'feed.xml'])
+            
+            if not self._execute_git_command(['git', 'commit', '-m', commit_message], check=False):
+                logger.info('没有需要提交的更改')
+                return
+            
+            # 推送到远程仓库
+            try:
+                self._execute_git_command(['git', 'push', 'origin', self.branch])
+                logger.info('成功推送到远程仓库')
+            except subprocess.CalledProcessError as e:
+                if 'non-fast-forward' in str(e.stderr):
+                    logger.warning('推送被拒绝，正在尝试同步并重试...')
+                    self._execute_git_command(['git', 'pull', '--rebase', 'origin', self.branch])
+                    self._execute_git_command(['git', 'push', 'origin', self.branch])
+                    logger.info('同步后推送成功')
+                else:
+                    raise
+        except Exception as e:
+            logger.error(f'推送feed.xml失败: {e}')
+            raise
+    
+    def _execute_git_command(self, command: list[str], check: bool = True, input: str = None) -> Optional[str]:
+        """执行Git命令并返回输出结果"""
         try:
             result = subprocess.run(
                 command,
@@ -50,153 +128,19 @@ class GitSync:
             )
             return result.stdout.strip()
         except subprocess.CalledProcessError as e:
-            print(f'Git command failed: {e.stderr}')
+            logger.error(f'Git命令执行失败: {e.stderr}')
             if check:
                 raise
             return None
     
-    def setup_git_config(self):
-        """配置Git用户信息和凭证"""
-        self._run_git_command(['git', 'config', 'user.name', self.username])
-        self._run_git_command(['git', 'config', 'user.email', f'{self.username}@users.noreply.github.com'])
-        # 配置凭证存储
-        self._run_git_command(['git', 'config', 'credential.helper', 'store'])
-        # 设置远程仓库认证信息
-        credential_input = f'url={self.repo_url}\nusername={self.username}\npassword={self.token}\n'
-        self._run_git_command(['git', 'credential', 'approve'], input=credential_input)
-    
-    def init_repo(self):
-        """初始化Git仓库并添加远程仓库"""
+    def _get_feed_date(self, feed_path: str) -> Optional[datetime]:
+        """获取feed.xml的最后更新时间"""
+        if not os.path.exists(feed_path):
+            return None
         try:
-            # 先配置Git凭证
-            self.setup_git_config()
-            
-            # 检查是否已经是Git仓库
-            if not os.path.exists(os.path.join(self.work_dir, '.git')):
-                self._run_git_command(['git', 'init'])
-                # 尝试添加远程仓库，如果失败则尝试更新URL
-                try:
-                    self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
-                except subprocess.CalledProcessError:
-                    self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
-            else:
-                # 检查是否存在远程仓库，如果不存在则添加
-                remote_exists = self._run_git_command(['git', 'remote'], check=False)
-                if 'origin' not in (remote_exists or ''):
-                    self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
-                else:
-                    # 更新远程仓库URL
-                    self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
-                
-            # 验证远程仓库连接
-            self._run_git_command(['git', 'ls-remote', '--exit-code', self.auth_repo_url, self.branch])
-        except Exception as e:
-            print(f'Failed to initialize repository: {e}')
-            raise
-    
-    def get_last_build_date(self, feed_path: str) -> Optional[datetime]:
-        """从feed.xml文件中获取lastBuildDate"""
-        try:
-            if not os.path.exists(feed_path):
-                return None
             tree = ET.parse(feed_path)
-            root = tree.getroot()
-            last_build_date = root.find('./channel/lastBuildDate')
-            if last_build_date is not None and last_build_date.text:
-                return parsedate_to_datetime(last_build_date.text)
+            last_build_date = tree.getroot().find('./channel/lastBuildDate')
+            return parsedate_to_datetime(last_build_date.text) if last_build_date is not None and last_build_date.text else None
+        except Exception as e:
+            logger.error(f'获取feed.xml最后更新时间失败: {e}')
             return None
-        except Exception as e:
-            print(f'Failed to get lastBuildDate: {e}')
-            return None
-
-    def pull_feed(self):
-        """从远程仓库拉取feed.xml并与本地版本对比"""
-        try:
-            # 获取本地feed.xml的lastBuildDate
-            local_feed_path = os.path.join(self.work_dir, 'feed.xml')
-            local_date = self.get_last_build_date(local_feed_path)
-
-            # 拉取远程仓库
-            self._run_git_command(['git', 'fetch', 'origin', self.branch])
-            self._run_git_command(['git', 'checkout', self.branch], check=False)
-            
-            # 获取远程feed.xml的lastBuildDate
-            remote_feed_path = os.path.join(self.work_dir, 'feed.xml')
-            self._run_git_command(['git', 'checkout', 'origin/' + self.branch, '--', 'feed.xml'], check=False)
-            remote_date = self.get_last_build_date(remote_feed_path)
-
-            # 如果远程版本较新，保留远程版本
-            if remote_date and (not local_date or remote_date > local_date):
-                self._run_git_command(['git', 'checkout', 'origin/' + self.branch, '--', 'feed.xml'])
-            else:
-                # 否则恢复本地版本（如果存在）
-                if os.path.exists(local_feed_path):
-                    self._run_git_command(['git', 'checkout', self.branch, '--', 'feed.xml'])
-
-        except subprocess.CalledProcessError as e:
-            print(f'Failed to pull from remote repository: {e}')
-        except Exception as e:
-            print(f'Error during feed comparison: {e}')
-    
-    def commit_and_push_feed(self):
-        """将更新后的feed.xml推送到远程仓库"""
-        try:
-            # 确保Git仓库已正确初始化并同步远程更改
-            self.init_repo()
-            
-            # 设置明确的pull策略
-            self._run_git_command(['git', 'config', 'pull.rebase', 'false'])
-            
-            # 先保存本地更改
-            self._run_git_command(['git', 'add', 'feed.xml'])
-            self._run_git_command(['git', 'commit', '-m', f'Update feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'], check=False)
-            
-            # 同步远程更改
-            self._run_git_command(['git', 'fetch', 'origin', self.branch])
-            try:
-                self._run_git_command(['git', 'pull', 'origin', self.branch'])
-            except subprocess.CalledProcessError as e:
-                logging.warning(f'拉取远程更改失败，尝试解决冲突: {e.stderr}')
-                # 如果合并失败，尝试使用merge策略
-                self._run_git_command(['git', 'config', 'pull.rebase', 'false'])
-                self._run_git_command(['git', 'pull', 'origin', self.branch', '--no-rebase'])
-            
-            feed_path = os.path.join(self.work_dir, 'feed.xml')
-            if not os.path.exists(feed_path):
-                logging.error('feed.xml文件不存在')
-                return
-            
-            # 添加并提交更改
-            self._run_git_command(['git', 'add', 'feed.xml'])
-            commit_message = f'Update feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-            commit_result = self._run_git_command(['git', 'commit', '-m', commit_message], check=False)
-            if commit_result is None:
-                logging.warning('没有需要提交的更改')
-                return
-            logging.info(f'已提交更新: {commit_message}')
-            
-            # 确保使用带认证的URL进行推送
-            self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
-            
-            # 推送到远程仓库
-            try:
-                push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
-                logging.info('已成功推送到远程仓库')
-            except subprocess.CalledProcessError as e:
-                if 'non-fast-forward' in str(e.stderr):
-                    logging.warning('推送被拒绝，正在重新同步并推送...')
-                    self._run_git_command(['git', 'pull', '--rebase', 'origin', self.branch])
-                    push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
-                    logging.info('重新同步后推送成功')
-                else:
-                    logging.error(f'推送失败，错误信息: {e.stderr}')
-                    # 尝试重新配置认证并重试
-                    self.setup_git_config()
-                    push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
-                    logging.info('重试推送成功')
-        except subprocess.CalledProcessError as e:
-            logging.error(f'推送feed.xml失败: {e.stderr}')
-            raise
-        except Exception as e:
-            logging.error(f'推送过程中发生未知错误: {str(e)}')
-            raise
