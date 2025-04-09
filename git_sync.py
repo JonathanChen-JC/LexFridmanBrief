@@ -74,10 +74,19 @@ class GitSync:
             # 检查是否已经是Git仓库
             if not os.path.exists(os.path.join(self.work_dir, '.git')):
                 self._run_git_command(['git', 'init'])
-                self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url], check=False)
+                # 尝试添加远程仓库，如果失败则尝试更新URL
+                try:
+                    self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
+                except subprocess.CalledProcessError:
+                    self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
             else:
-                # 更新远程仓库URL
-                self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url], check=False)
+                # 检查是否存在远程仓库，如果不存在则添加
+                remote_exists = self._run_git_command(['git', 'remote'], check=False)
+                if 'origin' not in (remote_exists or ''):
+                    self._run_git_command(['git', 'remote', 'add', 'origin', self.auth_repo_url])
+                else:
+                    # 更新远程仓库URL
+                    self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
                 
             # 验证远程仓库连接
             self._run_git_command(['git', 'ls-remote', '--exit-code', self.auth_repo_url, self.branch])
