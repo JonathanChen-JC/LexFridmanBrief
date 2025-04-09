@@ -140,12 +140,28 @@ class GitSync:
             # 添加并提交更改
             self._run_git_command(['git', 'add', 'feed.xml'])
             commit_message = f'Update feed.xml - {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'
-            self._run_git_command(['git', 'commit', '-m', commit_message], check=False)
+            commit_result = self._run_git_command(['git', 'commit', '-m', commit_message], check=False)
+            if commit_result is None:
+                logging.warning('没有需要提交的更改')
+                return
             logging.info(f'已提交更新: {commit_message}')
             
+            # 确保使用带认证的URL进行推送
+            self._run_git_command(['git', 'remote', 'set-url', 'origin', self.auth_repo_url])
+            
             # 推送到远程仓库
-            self._run_git_command(['git', 'push', 'origin', self.branch])
-            logging.info('已成功推送到远程仓库')
+            try:
+                push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
+                logging.info('已成功推送到远程仓库')
+            except subprocess.CalledProcessError as e:
+                logging.error(f'推送失败，错误信息: {e.stderr}')
+                # 尝试重新配置认证并重试
+                self.setup_git_config()
+                push_result = self._run_git_command(['git', 'push', 'origin', self.branch])
+                logging.info('重试推送成功')
         except subprocess.CalledProcessError as e:
-            logging.error(f'推送feed.xml失败: {e}')
+            logging.error(f'推送feed.xml失败: {e.stderr}')
+            raise
+        except Exception as e:
+            logging.error(f'推送过程中发生未知错误: {str(e)}')
             raise
