@@ -105,37 +105,16 @@ class LexFridmanTranscriptScraper:
                 logging.warning(f"在RSS源中未找到当前播客: {podcast_url}")
                 return None
             
-            # 在当前播客的<item>标签内容中查找Transcript链接
-            description_elem = current_item.find('description', namespaces)
-            if description_elem is None or not description_elem.text:
-                logging.warning(f"当前播客没有描述内容: {podcast_url}")
-                return None
+            # 获取当前item的完整XML内容
+            item_xml = ET.tostring(current_item, encoding='unicode')
             
-            # 解析描述内容中的HTML
-            soup = BeautifulSoup(description_elem.text, 'html.parser')
+            # 直接在整个item内容中搜索'Transcript:'后的URL
+            transcript_pattern = re.compile(r'Transcript:\s*(https?:\/\/[^\s\"]+)')
+            match = transcript_pattern.search(item_xml)
+            if match:
+                return match.group(1).strip()
             
-            # 方法1: 查找包含"Transcript:"文本的元素及其后的链接
-            for element in soup.find_all(['p', 'div', 'span']):
-                if element.text and "Transcript:" in element.text:
-                    # 提取文本中的URL
-                    text = element.text
-                    transcript_text_part = text.split("Transcript:", 1)[1].strip()
-                    url_match = re.search(r'https?://[\w.-]+(?:/[\w.-]*)*/?(?:-transcript)?', transcript_text_part)
-                    if url_match:
-                        return url_match.group(0)
-                    
-                    # 查找该元素后的链接
-                    next_element = element.find_next('a')
-                    if next_element and next_element.get('href'):
-                        return next_element.get('href')
-            
-            # 方法2: 直接查找URL中包含transcript的链接
-            for link in soup.find_all('a'):
-                href = link.get('href')
-                if href and "transcript" in href.lower():
-                    return href
-            
-            logging.warning(f"暂未找到这集播客的逐字稿: {podcast_url}")
+            logging.warning(f"未能在播客描述中找到Transcript链接: {podcast_url}")
             return None
             
         except Exception as e:
