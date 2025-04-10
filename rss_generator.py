@@ -142,8 +142,8 @@ def update_feed():
             # 添加新条目到现有条目列表
             existing_entries.append(new_entry)
             
-            # 确保只添加最新的50个条目到feed
-            for entry in list(existing_entries):
+            # 将现有条目添加到feed中（除了刚刚添加的新条目）
+            for entry in list(existing_entries)[:-1]:
                 fe = fg.add_entry()
                 fe.title(entry['title'])
                 fe.link(href=entry['link'])
