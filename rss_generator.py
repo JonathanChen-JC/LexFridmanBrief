@@ -77,19 +77,44 @@ def update_feed():
     brief_dir = os.path.join(os.path.dirname(__file__), 'brief')
     feed_path = os.path.join(os.path.dirname(__file__), 'feed.xml')
     
-    # 获取现有条目
-    existing_entries = parse_existing_feed(feed_path)
+    # 如果feed.xml不存在，创建新的feed
+    if not os.path.exists(feed_path):
+        fg = create_rss_feed()
+        existing_entries = deque(maxlen=50)
+    else:
+        # 如果feed.xml存在，解析现有的feed
+        fg = FeedGenerator()
+        tree = ET.parse(feed_path)
+        root = tree.getroot()
+        
+        # 复制现有feed的基本信息
+        channel = root.find('channel')
+        fg.title(channel.find('title').text)
+        fg.link(href=channel.find('link').text)
+        fg.description(channel.find('description').text)
+        fg.language(channel.find('language').text)
+        
+        # 获取现有条目
+        existing_entries = parse_existing_feed(feed_path)
     
-    # 创建新的feed
-    fg = create_rss_feed()
-    
-    # 读取brief目录下的所有md文件
+    # 获取最新的brief文件
+    latest_brief = None
+    latest_mtime = 0
     for filename in os.listdir(brief_dir):
         if filename.endswith('.md'):
             file_path = os.path.join(brief_dir, filename)
-            
-            # 从文件名中提取标题
-            title = filename[:-3]  # 移除.md后缀
+            mtime = os.path.getmtime(file_path)
+            if mtime > latest_mtime:
+                latest_mtime = mtime
+                latest_brief = filename
+    
+    # 如果找到最新的brief文件，检查是否需要添加到feed
+    if latest_brief:
+        title = latest_brief[:-3]  # 移除.md后缀
+        
+        # 检查是否已存在相同标题的条目
+        if not any(entry['title'] == title for entry in existing_entries):
+            file_path = os.path.join(brief_dir, latest_brief)
             
             # 读取文件内容
             with open(file_path, 'r', encoding='utf-8') as f:
@@ -99,28 +124,31 @@ def update_feed():
             formatted_content = format_content(content)
             
             # 创建新条目
-            fe = fg.add_entry()
-            fe.title(title)
-            fe.link(href='https://lexfridman.com/')
-            fe.description(formatted_content)
             current_time = datetime.now(ZoneInfo('Asia/Shanghai'))
-            fe.pubDate(current_time)
-            
-            # 将新条目添加到现有条目队列
-            existing_entries.append({
+            new_entry = {
                 'title': title,
                 'link': 'https://lexfridman.com/',
                 'description': formatted_content,
                 'pub_date': current_time.strftime('%a, %d %b %Y %H:%M:%S %z')
-            })
-    
-    # 将所有条目写入feed
-    for entry in existing_entries:
-        fe = fg.add_entry()
-        fe.title(entry['title'])
-        fe.link(href=entry['link'])
-        fe.description(entry['description'])
-        fe.pubDate(datetime.strptime(entry['pub_date'], '%a, %d %b %Y %H:%M:%S %z'))
-    
-    # 生成feed并写入文件
-    fg.rss_file(feed_path, pretty=True)
+            }
+            
+            # 添加新条目到feed
+            fe = fg.add_entry()
+            fe.title(new_entry['title'])
+            fe.link(href=new_entry['link'])
+            fe.description(new_entry['description'])
+            fe.pubDate(datetime.strptime(new_entry['pub_date'], '%a, %d %b %Y %H:%M:%S %z'))
+            
+            # 添加新条目到现有条目列表
+            existing_entries.append(new_entry)
+            
+            # 确保只添加最新的50个条目到feed
+            for entry in list(existing_entries):
+                fe = fg.add_entry()
+                fe.title(entry['title'])
+                fe.link(href=entry['link'])
+                fe.description(entry['description'])
+                fe.pubDate(datetime.strptime(entry['pub_date'], '%a, %d %b %Y %H:%M:%S %z'))
+            
+            # 生成feed并写入文件
+            fg.rss_file(feed_path, pretty=True)
